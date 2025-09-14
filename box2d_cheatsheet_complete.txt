@@ -1,0 +1,662 @@
+# Complete Box2D Pinball Development Cheatsheet
+
+## Core Types & IDs
+
+### Essential IDs (opaque handles)
+```odin
+WorldId   // References world instance
+BodyId    // References body instance  
+ShapeId   // References shape instance
+JointId   // References joint instance
+ChainId   // References chain shape instance
+```
+
+### Body Types
+```odin
+BodyType :: enum i32 {
+    staticBody    = 0,  // Zero mass, immovable (walls, bumpers)
+    kinematicBody = 1,  // Zero mass, user-controlled velocity (flippers)
+    dynamicBody   = 2,  // Has mass, physics-driven (ball, targets)
+}
+```
+
+### Shape Types
+```odin
+ShapeType :: enum i32 {
+    circleShape,        // Ball, rounded bumpers
+    capsuleShape,       // Rounded rectangles
+    segmentShape,       // Wall segments
+    polygonShape,       // Complex obstacles
+    chainSegmentShape,  // Chain links
+}
+```
+
+## World Management
+
+### World Creation
+```odin
+// Initialize world definition
+worldDef := DefaultWorldDef()
+worldDef.gravity = {0, -9.8}  // Downward gravity for pinball
+worldDef.enableSleep = true   // Let objects sleep for performance
+
+// Create world
+worldId := CreateWorld(worldDef)
+```
+
+### World Stepping
+```odin
+// Main physics update loop
+timeStep := 1.0/60.0  // 60 FPS
+World_Step(worldId, timeStep, 4)  // 4 = sub-step count
+```
+
+### World Cleanup
+```odin
+DestroyWorld(worldId)
+```
+
+### World Configuration
+```odin
+// Runtime settings
+World_SetGravity(worldId, {0, -9.8})
+World_EnableSleeping(worldId, true)
+World_EnableContinuous(worldId, true)        // Fast-moving object tunneling prevention
+World_SetHitEventThreshold(worldId, 0.5)    // Min velocity for hit events
+World_SetRestitutionThreshold(worldId, 1.0) // Min velocity for bounce
+World_SetMaximumLinearSpeed(worldId, 100.0) // Speed cap
+
+// Get world info
+gravity := World_GetGravity(worldId)
+awakeCount := World_GetAwakeBodyCount(worldId)
+profile := World_GetProfile(worldId)  // Performance metrics
+```
+
+## Body Creation & Management
+
+### Body Definition Template
+```odin
+bodyDef := DefaultBodyDef()
+bodyDef.type = .dynamicBody           // or .staticBody, .kinematicBody
+bodyDef.position = {x, y}             // World position
+bodyDef.rotation = MakeRot(angle)     // Initial rotation
+bodyDef.linearVelocity = {vx, vy}     // Initial velocity
+bodyDef.angularVelocity = omega       // Initial spin
+bodyDef.linearDamping = 0.1           // Air resistance
+bodyDef.angularDamping = 0.1          // Rotational drag
+bodyDef.gravityScale = 1.0            // Gravity multiplier
+bodyDef.isBullet = false              // High-speed collision detection
+bodyDef.userData = game_object_ptr    // Link to your game object
+```
+
+### Create Body
+```odin
+bodyId := CreateBody(worldId, bodyDef)
+```
+
+### Body State Queries
+```odin
+// Position & transform
+position := Body_GetPosition(bodyId)
+rotation := Body_GetRotation(bodyId)
+transform := Body_GetTransform(bodyId)
+
+// Velocity
+linearVel := Body_GetLinearVelocity(bodyId)
+angularVel := Body_GetAngularVelocity(bodyId)
+
+// Mass properties
+mass := Body_GetMass(bodyId)
+inertia := Body_GetRotationalInertia(bodyId)
+massData := Body_GetMassData(bodyId)
+centerMass := Body_GetWorldCenterOfMass(bodyId)
+
+// State flags
+isAwake := Body_IsAwake(bodyId)
+isEnabled := Body_IsEnabled(bodyId)
+isBullet := Body_IsBullet(bodyId)
+```
+
+### Body State Modification
+```odin
+// Transform (expensive - use sparingly)
+Body_SetTransform(bodyId, newPosition, newRotation)
+
+// Velocity
+Body_SetLinearVelocity(bodyId, {vx, vy})
+Body_SetAngularVelocity(bodyId, omega)
+
+// Wake/sleep control
+Body_SetAwake(bodyId, true)
+Body_EnableSleep(bodyId, true)
+
+// Type conversion (expensive)
+Body_SetType(bodyId, .kinematicBody)
+
+// Mass override (use Body_ApplyMassFromShapes to reset)
+Body_SetMassData(bodyId, customMassData)
+Body_ApplyMassFromShapes(bodyId)  // Reset to shape-based mass
+```
+
+## Shape Creation
+
+### Shape Definition Template
+```odin
+shapeDef := DefaultShapeDef()
+shapeDef.density = 1.0                // Mass per area
+shapeDef.friction = 0.3               // Surface friction
+shapeDef.restitution = 0.6            // Bounciness (0-1)
+shapeDef.isSensor = false             // Trigger vs solid collision
+shapeDef.enableContactEvents = true   // Collision callbacks
+shapeDef.enableHitEvents = true       // High-speed collision events
+shapeDef.enableSensorEvents = false   // Sensor overlap events
+shapeDef.enablePreSolveEvents = false // Pre-solve events (expensive)
+shapeDef.userData = shape_data_ptr    // Link to shape-specific data
+```
+
+### Circle Shape (Ball)
+```odin
+circle := Circle{
+    center = {0, 0},    // Local offset
+    radius = 0.5,       // Ball radius
+}
+shapeId := CreateCircleShape(bodyId, shapeDef, circle)
+```
+
+### Polygon Shape (Complex Obstacles)
+```odin
+// Box helper
+polygon := MakeBox(halfWidth, halfHeight)
+shapeId := CreatePolygonShape(bodyId, shapeDef, polygon)
+
+// Custom polygon from points
+points := []Vec2{{-1, 0}, {1, 0}, {0, 2}}
+hull := ComputeHull(raw_data(points), len(points))
+polygon := MakePolygon(hull, 0)  // 0 = sharp corners
+shapeId := CreatePolygonShape(bodyId, shapeDef, polygon)
+
+// Rounded polygon
+roundedPolygon := MakePolygon(hull, 0.1)  // 0.1 = rounding radius
+```
+
+### Segment Shape (Walls)
+```odin
+segment := Segment{
+    point1 = {x1, y1},
+    point2 = {x2, y2},
+}
+shapeId := CreateSegmentShape(bodyId, shapeDef, segment)
+```
+
+### Capsule Shape (Rounded Rectangles)
+```odin
+capsule := Capsule{
+    center1 = {-halfLength, 0},  // First circle center
+    center2 = {halfLength, 0},   // Second circle center  
+    radius = radius,             // Rounding radius
+}
+shapeId := CreateCapsuleShape(bodyId, shapeDef, capsule)
+```
+
+### Shape Queries
+```odin
+// Shape properties
+shapeType := Shape_GetType(shapeId)
+bodyId := Shape_GetBody(shapeId)
+density := Shape_GetDensity(shapeId)
+friction := Shape_GetFriction(shapeId)
+restitution := Shape_GetRestitution(shapeId)
+
+// Shape geometry (returns copy)
+circle := Shape_GetCircle(shapeId)      // Asserts circle type
+polygon := Shape_GetPolygon(shapeId)    // Asserts polygon type
+segment := Shape_GetSegment(shapeId)    // Asserts segment type
+capsule := Shape_GetCapsule(shapeId)    // Asserts capsule type
+
+// Spatial queries
+aabb := Shape_GetAABB(shapeId)
+isOverlapping := Shape_TestPoint(shapeId, worldPoint)
+closest := Shape_GetClosestPoint(shapeId, targetPoint)
+```
+
+## Force and Impulse Application
+
+### Forces (continuous over time)
+```odin
+// Apply force at center of mass
+Body_ApplyForceToCenter(bodyId, {fx, fy}, true)  // true = wake body
+
+// Apply force at specific point (creates torque if not at center)
+Body_ApplyForce(bodyId, {fx, fy}, worldPoint, true)
+
+// Apply pure torque
+Body_ApplyTorque(bodyId, torque, true)
+```
+
+### Impulses (instant velocity change)
+```odin
+// Apply impulse at center of mass
+Body_ApplyLinearImpulseToCenter(bodyId, {ix, iy}, true)
+
+// Apply impulse at specific point
+Body_ApplyLinearImpulse(bodyId, {ix, iy}, worldPoint, true)
+
+// Apply angular impulse
+Body_ApplyAngularImpulse(bodyId, angularImpulse, true)
+```
+
+## Joints for Pinball Mechanics
+
+### Revolute Joint (Flippers)
+```odin
+jointDef := DefaultRevoluteJointDef()
+jointDef.bodyIdA = staticAnchorBody   // Fixed anchor point
+jointDef.bodyIdB = flipperBody        // Moving flipper
+jointDef.localAnchorA = {0, 0}        // Anchor point on static body
+jointDef.localAnchorB = {-1, 0}       // Pivot point on flipper
+jointDef.enableLimit = true           // Limit rotation range
+jointDef.lowerAngle = -0.5            // Lower rotation limit
+jointDef.upperAngle = 0.5             // Upper rotation limit
+jointDef.enableMotor = true           // Motor for flipper action
+jointDef.maxMotorTorque = 50.0        // Motor strength
+jointDef.motorSpeed = 0.0             // Default speed (controlled in update)
+
+jointId := CreateRevoluteJoint(worldId, jointDef)
+
+// Runtime control
+RevoluteJoint_SetMotorSpeed(jointId, speed)      // Control flipper
+RevoluteJoint_EnableMotor(jointId, true)
+angle := RevoluteJoint_GetAngle(jointId)         // Current angle
+torque := RevoluteJoint_GetMotorTorque(jointId)  // Current motor force
+```
+
+### Distance Joint (Plunger Spring)
+```odin
+jointDef := DefaultDistanceJointDef()
+jointDef.bodyIdA = staticBody         // Fixed anchor
+jointDef.bodyIdB = plungerBody        // Moving plunger
+jointDef.length = restLength          // Spring rest length
+jointDef.enableSpring = true          // Enable spring behavior
+jointDef.hertz = 5.0                  // Spring frequency
+jointDef.dampingRatio = 0.7           // Spring damping
+
+jointId := CreateDistanceJoint(worldId, jointDef)
+
+// Runtime control
+DistanceJoint_SetLength(jointId, newLength)
+DistanceJoint_SetSpringHertz(jointId, frequency)
+currentLength := DistanceJoint_GetCurrentLength(jointId)
+```
+
+### Prismatic Joint (Linear Slider)
+```odin
+jointDef := DefaultPrismaticJointDef()
+jointDef.bodyIdA = staticBody
+jointDef.bodyIdB = movingBody
+jointDef.enableMotor = true
+jointDef.maxMotorForce = 100.0
+jointDef.enableLimit = true
+jointDef.lowerLimit = -2.0
+jointDef.upperLimit = 2.0
+
+jointId := CreatePrismaticJoint(worldId, jointDef)
+
+// Runtime control
+PrismaticJoint_SetMotorSpeed(jointId, speed)
+translation := PrismaticJoint_GetTranslation(jointId)
+```
+
+### Mouse Joint (Dragging Objects)
+```odin
+jointDef := DefaultMouseJointDef()
+jointDef.bodyIdA = staticGroundBody
+jointDef.bodyIdB = targetBody
+jointDef.target = mouseWorldPos
+jointDef.maxForce = 1000.0 * Body_GetMass(targetBody)
+jointDef.springHertz = 5.0
+jointDef.springDampingRatio = 0.7
+
+jointId := CreateMouseJoint(worldId, jointDef)
+
+// Update target position
+MouseJoint_SetTarget(jointId, newMousePos)
+```
+
+## Event Handling
+
+### Contact Events
+```odin
+// After World_Step()
+contactEvents := World_GetContactEvents(worldId)
+
+// Process begin touch events (collisions start)
+for i in 0..<contactEvents.beginCount {
+    event := contactEvents.beginEvents[i]
+    // Handle collision between event.shapeIdA and event.shapeIdB
+    // event.manifold contains contact details
+}
+
+// Process end touch events (collisions end)
+for i in 0..<contactEvents.endCount {
+    event := contactEvents.endEvents[i]
+    // Handle separation
+}
+
+// Process hit events (high-speed collisions)
+for i in 0..<contactEvents.hitCount {
+    hit := contactEvents.hitEvents[i]
+    // Handle impact at hit.point with hit.approachSpeed
+    // Useful for sound effects and particle systems
+}
+```
+
+### Sensor Events
+```odin
+sensorEvents := World_GetSensorEvents(worldId)
+
+// Ball entering trigger zones
+for i in 0..<sensorEvents.beginCount {
+    event := sensorEvents.beginEvents[i]
+    // event.sensorShapeId touched by event.visitorShapeId
+}
+
+// Ball leaving trigger zones
+for i in 0..<sensorEvents.endCount {
+    event := sensorEvents.endEvents[i]
+    // event.sensorShapeId no longer touched by event.visitorShapeId
+}
+```
+
+### Body Events
+```odin
+bodyEvents := World_GetBodyEvents(worldId)
+
+// Bodies that moved this step
+for i in 0..<bodyEvents.moveCount {
+    event := bodyEvents.moveEvents[i]
+    // Handle body movement: event.bodyId, event.transform, event.userData
+}
+```
+
+## Collision Queries
+
+### Ray Casting
+```odin
+// Single closest hit
+result := World_CastRayClosest(worldId, origin, translation, queryFilter)
+if result.hit {
+    hitPoint := Add(origin, MulSV(result.fraction, translation))
+    // Use result.normal, result.shapeId
+}
+
+// Multiple hits with callback
+callback :: proc "c" (shapeId: ShapeId, point: [2]f32, normal: [2]f32, fraction: f32, context: rawptr) -> f32 {
+    // Return 0 to terminate, 1 to continue, or fraction to clip ray
+    return 1.0  // Continue ray casting
+}
+
+World_CastRay(worldId, origin, translation, queryFilter, callback, context)
+```
+
+### Shape Casting
+```odin
+// Move a shape through the world
+proxy := MakeProxy(points, radius)
+result := World_CastShape(worldId, proxy, translation, queryFilter, callback, context)
+```
+
+### Overlap Testing
+```odin
+// Test AABB overlap
+aabb := AABB{lowerBound, upperBound}
+World_OverlapAABB(worldId, aabb, queryFilter, callback, context)
+
+// Test shape overlap
+proxy := MakeProxy(points, radius)
+World_OverlapShape(worldId, proxy, queryFilter, callback, context)
+
+// Point testing on specific shape
+isInside := Shape_TestPoint(shapeId, worldPoint)
+```
+
+### Query Filters
+```odin
+queryFilter := DefaultQueryFilter()
+queryFilter.categoryBits = 0x0001       // What categories to test
+queryFilter.maskBits = 0xFFFF           // What categories can be hit
+```
+
+## Common Pinball Elements
+
+### Ball Setup
+```odin
+// Dynamic body with circle shape
+bodyDef := DefaultBodyDef()
+bodyDef.type = .dynamicBody
+bodyDef.position = ballStartPos
+bodyDef.linearDamping = 0.1    // Slight air resistance
+bodyDef.angularDamping = 0.1   // Rolling resistance
+bodyDef.isBullet = true        // Prevent tunneling through fast obstacles
+
+ballBody := CreateBody(worldId, bodyDef)
+
+shapeDef := DefaultShapeDef()
+shapeDef.density = 7.8         // Steel density
+shapeDef.friction = 0.3        // Ball-to-surface friction
+shapeDef.restitution = 0.8     // Bouncy ball
+shapeDef.enableHitEvents = true // For collision sound effects
+
+circle := Circle{{0, 0}, BALL_RADIUS}
+ballShape := CreateCircleShape(ballBody, shapeDef, circle)
+```
+
+### Static Walls
+```odin
+bodyDef := DefaultBodyDef()
+bodyDef.type = .staticBody
+bodyDef.position = wallPosition
+
+wallBody := CreateBody(worldId, bodyDef)
+
+shapeDef := DefaultShapeDef()
+shapeDef.friction = 0.4
+shapeDef.restitution = 0.3    // Less bouncy walls
+
+segment := Segment{startPoint, endPoint}
+wallShape := CreateSegmentShape(wallBody, shapeDef, segment)
+```
+
+### Bumpers
+```odin
+bodyDef := DefaultBodyDef()
+bodyDef.type = .staticBody
+bodyDef.position = bumperPos
+
+bumperBody := CreateBody(worldId, bodyDef)
+
+shapeDef := DefaultShapeDef()
+shapeDef.restitution = 1.2    // Super bouncy!
+shapeDef.enableHitEvents = true  // Detect hits for scoring
+
+circle := Circle{{0, 0}, bumperRadius}
+bumperShape := CreateCircleShape(bumperBody, shapeDef, circle)
+```
+
+### Slingshots (Kinematic Bumpers)
+```odin
+bodyDef := DefaultBodyDef()
+bodyDef.type = .kinematicBody
+bodyDef.position = slingshotPos
+
+slingshotBody := CreateBody(worldId, bodyDef)
+
+shapeDef := DefaultShapeDef()
+shapeDef.restitution = 1.5
+shapeDef.enableHitEvents = true
+
+// On hit, apply impulse and animate
+// Body_ApplyLinearImpulseToCenter(ballBody, kickImpulse, true)
+```
+
+## Math & Utility Functions
+
+### Vector Operations
+```odin
+// Basic operations
+result := Add(vectorA, vectorB)
+result := Sub(vectorA, vectorB)
+result := MulSV(scalar, vector)
+result := Mul(vectorA, vectorB)  // Component-wise
+result := Neg(vector)
+
+// Advanced operations
+length := Length(vector)
+lengthSq := LengthSquared(vector)
+distance := Distance(pointA, pointB)
+normalized := Normalize(vector)
+dotProduct := Dot(vectorA, vectorB)
+crossProduct := Cross(vectorA, vectorB)  // 2D cross (scalar result)
+
+// Interpolation
+result := Lerp(vectorA, vectorB, t)  // Linear interpolation
+result := MulAdd(a, s, b)  // a + s * b
+result := MulSub(a, s, b)  // a - s * b
+
+// Perpendiculars
+leftPerp := LeftPerp(vector)   // 90 degrees counter-clockwise
+rightPerp := RightPerp(vector) // 90 degrees clockwise
+```
+
+### Rotation Operations
+```odin
+// Create rotations
+rotation := MakeRot(angleInRadians)
+angle := Rot_GetAngle(rotation)
+
+// Rotation math
+combined := MulRot(rotA, rotB)         // Multiply rotations
+inverse := InvMulRot(rotA, rotB)       // rotA^T * rotB
+relative := RelativeAngle(rotB, rotA)   // Angle between rotations
+
+// Vector rotation
+rotated := RotateVector(rotation, vector)
+unrotated := InvRotateVector(rotation, vector)
+
+// Axes
+xAxis := Rot_GetXAxis(rotation)  // Unit vector in local X direction
+yAxis := Rot_GetYAxis(rotation)  // Unit vector in local Y direction
+```
+
+### Transform Operations
+```odin
+// Point transformation
+worldPoint := TransformPoint(transform, localPoint)
+localPoint := InvTransformPoint(transform, worldPoint)
+
+// Transform composition
+combined := MulTransforms(transformA, transformB)
+inverse := InvMulTransforms(transformA, transformB)
+
+// Body coordinate conversion
+worldPoint := Body_GetWorldPoint(bodyId, localPoint)
+localPoint := Body_GetLocalPoint(bodyId, worldPoint)
+worldVector := Body_GetWorldVector(bodyId, localVector)
+localVector := Body_GetLocalVector(bodyId, worldVector)
+```
+
+### AABB Operations
+```odin
+// Create AABB from points
+aabb := MakeAABB(points, radius)
+
+// AABB queries
+isValid := IsValidAABB(aabb)
+contains := PointInAABB(point, aabb)
+
+// Shape AABBs
+circleAABB := ComputeCircleAABB(circle, transform)
+polygonAABB := ComputePolygonAABB(polygon, transform)
+capsuleAABB := ComputeCapsuleAABB(capsule, transform)
+segmentAABB := ComputeSegmentAABB(segment, transform)
+```
+
+## Performance Optimization
+
+### Sleeping Bodies
+```odin
+// Bodies automatically sleep when stationary
+Body_EnableSleep(bodyId, true)
+Body_SetSleepThreshold(bodyId, 0.01)  // Sleep when velocity < threshold
+
+// Manual sleep control
+Body_SetAwake(bodyId, false)  // Force sleep (puts entire island to sleep)
+isAwake := Body_IsAwake(bodyId)
+```
+
+### Collision Filtering
+```odin
+filter := DefaultFilter()
+filter.categoryBits = 0x0002     // What I am
+filter.maskBits = 0x0001         // What I collide with
+filter.groupIndex = 0            // Negative = never collide, positive = always collide
+
+Shape_SetFilter(shapeId, filter)
+```
+
+### Event Management
+```odin
+// Enable only needed events to reduce overhead
+Shape_EnableContactEvents(shapeId, false)   // Disable if not needed
+Shape_EnableHitEvents(shapeId, false)       // Disable if not needed
+Shape_EnableSensorEvents(shapeId, false)    // Disable if not needed
+Shape_EnablePreSolveEvents(shapeId, false)  // Expensive - avoid unless necessary
+```
+
+### World Settings
+```odin
+// Disable features you don't need
+World_EnableSleeping(worldId, true)        // Allow sleeping for performance
+World_EnableContinuous(worldId, false)    // Disable if no fast objects
+World_EnableWarmStarting(worldId, true)    // Keep enabled for stability
+```
+
+### Memory Management
+```odin
+// Clean up destroyed objects
+DestroyShape(shapeId, false)  // Defer mass update if destroying multiple shapes
+Body_ApplyMassFromShapes(bodyId)  // Update mass after destroying all shapes
+
+DestroyBody(bodyId)    // Destroys all attached shapes and joints
+DestroyJoint(jointId)
+DestroyChain(chainId)
+
+// Check memory usage
+byteCount := GetByteCount()
+World_DumpMemoryStats(worldId)  // Writes to box2d_memory.txt
+```
+
+## Common Pinball Constants
+```odin
+BALL_RADIUS     :: 0.5
+GRAVITY         :: Vec2{0, -9.8}
+FLIPPER_TORQUE  :: 50.0
+BUMPER_BOUNCE   :: 1.2
+WALL_FRICTION   :: 0.4
+BALL_FRICTION   :: 0.3
+BALL_DENSITY    :: 7.8    // Steel
+PLYWOOD_DENSITY :: 0.6    // Table surface
+TIMESTEP        :: 1.0/60.0
+SUBSTEPS        :: 4
+```
+
+## Debug Drawing
+```odin
+debugDraw := DefaultDebugDraw()
+debugDraw.drawShapes = true
+debugDraw.drawJoints = true
+debugDraw.drawAABBs = false
+debugDraw.drawMass = false
+debugDraw.drawContacts = false
+
+World_Draw(worldId, debugDraw)
+```
